@@ -1,197 +1,150 @@
-cmake_minimum_required(VERSION 3.10.2 FATAL_ERROR)
-message(STATUS "CMake version: ${CMAKE_VERSION}")
+cmake_minimum_required(VERSION 3.18 FATAL_ERROR)
 
-set(CMAKE_CXX_STANDARD "11")
-if(NOT CMAKE_CXX_STANDARD_REQUIRED)
-  set(CMAKE_CXX_STANDARD_REQUIRED ON)
-endif()
+project(GPU-HC
+  VERSION 1.0
+  LANGUAGES CXX CUDA
+)
 
-set(MAGMADIR    "/home/ahmad/magma-openblas")
-set(OPENBLASDIR "/home/ahmad/openblas")
-set(YAMLCPP_DIR "/home/ahmad/yaml-cpp")
+# -----------------------------------------------------------------------------
+# Build options
+# -----------------------------------------------------------------------------
+option(GPUHC_ICL_BUILD
+  "Use ICL machine dependency paths and multi-arch CUDA flags" OFF)
 
-# this is for custom options on ICL machines
-#set(ICL_BUILD 1)
-
-set(CMAKE_CXX_FLAGS_DEBUG "-g -Wall" CACHE STRING "" FORCE)
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -ffast-math" CACHE STRING "" FORCE)
-
-project(TrifocalRelativePose)
-
-# -- enable the use of cuda --
-option(USE_CUDA "Use CUDA" ON)
-enable_language("CUDA")
 include(${CMAKE_CURRENT_SOURCE_DIR}/config/cmake/InitializeBuildType.cmake)
 
-# -- Crucial flags for performance --
-if(DEFINED ICL_BUILD)
-    # for building from the repo, explicitly add the DADD_ option
-    set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG -DADD_ -march=native" CACHE STRING "" FORCE)
+set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
-    # build for volta arch. (compute capability 70)
-    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -gencode arch=compute_70,code=sm_70")
+set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-    # build for ampere arch. (compute capability 80)
-    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -gencode arch=compute_80,code=sm_80")
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
-    # build for ampere arch. (compute capability 90)
-    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -gencode arch=compute_90,code=sm_90")
-
-    # add the DADD_ option to nvcc
-    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -DADD_")
-
-    # this option lets nvcc give some info about register usage/spills
-    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xptxas -v")
-
-    # this option (currently commented out) can be used to limit the use of registers
-    # set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --maxrregcount 128")
-
+# -----------------------------------------------------------------------------
+# Dependency roots (override on the cmake command line if needed)
+# -----------------------------------------------------------------------------
+if(GPUHC_ICL_BUILD)
+  set(_magma_root_default    "/home/ahmad/magma-openblas")
+  set(_magma_source_default  "/home/ahmad/magma-openblas")
+  set(_yaml_root_default     "/home/ahmad/yaml-cpp")
+  set(_openblas_hint_default "/home/ahmad/openblas")
 else()
-    set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG -march=native" CACHE STRING "" FORCE)
-
-    # build for volta arch. (compute capability 70)
-    #set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -gencode arch=compute_70,code=sm_70")
-
-    # build for ampere arch. (compute capability 80)
-    #set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -gencode arch=compute_80,code=sm_80")
-
-    # build for ampere arch. (compute capability 90)
-    #set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -gencode arch=compute_90,code=sm_90")
-
-    # add the DADD_ option to nvcc
-    #set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -DADD_")
-
-    # this option lets nvcc give some info about register usage/spills
-    #set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xptxas -v")
-
+  # Oscar / Brown defaults:
+  #   MAGMA install (lib + public headers): magma-2.10.0/bin
+  #   MAGMA source  (internal headers):     magma-2.10.0
+  set(_magma_root_default    "/gpfs/data/bkimia/cchien3/magma-2.10.0/bin")
+  set(_magma_source_default  "/gpfs/data/bkimia/cchien3/magma-2.10.0")
+  set(_yaml_root_default     "/gpfs/data/bkimia/cchien3/yaml-cpp/bin")
+  set(_openblas_hint_default "")
 endif()
 
+set(MAGMA_ROOT "${_magma_root_default}" CACHE PATH
+  "MAGMA install prefix (contains include/ and lib/)")
+set(MAGMA_SOURCE_ROOT "${_magma_source_default}" CACHE PATH
+  "MAGMA source tree (for magma_internal.h / magma_templates.h)")
+set(YAML_CPP_ROOT "${_yaml_root_default}" CACHE PATH
+  "yaml-cpp install prefix")
+set(OPENBLAS_ROOT "${_openblas_hint_default}" CACHE PATH
+  "Optional OpenBLAS install hint; leave empty to use modules / CMAKE_PREFIX_PATH")
 
-
-#-----------------------------------------------------------------------------
-if(NOT COMMAND SETIFEMPTY)
-  macro(SETIFEMPTY)
-    set(KEY ${ARGV0})
-    set(VALUE ${ARGV1})
-    if(NOT ${KEY})
-      set(${ARGV})
-    endif()
-  endmacro()
+# -----------------------------------------------------------------------------
+# Compiler flags
+# -----------------------------------------------------------------------------
+if(GPUHC_ICL_BUILD)
+  # MAGMA on ICL expects the Fortran name-mangling macro -DADD_
+  add_compile_options(
+    $<$<COMPILE_LANGUAGE:CXX>:-O3>
+    $<$<COMPILE_LANGUAGE:CXX>:-DNDEBUG>
+    $<$<COMPILE_LANGUAGE:CXX>:-DADD_>
+    $<$<COMPILE_LANGUAGE:CXX>:-march=native>
+    $<$<COMPILE_LANGUAGE:CUDA>:-DADD_>
+    $<$<COMPILE_LANGUAGE:CUDA>:-Xptxas=-v>
+  )
+  # Multi-arch fat binary for ICL GPUs
+  set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} \
+    -gencode arch=compute_70,code=sm_70 \
+    -gencode arch=compute_80,code=sm_80 \
+    -gencode arch=compute_90,code=sm_90")
+else()
+  add_compile_options(
+    $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Release>>:-O3>
+    $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Release>>:-DNDEBUG>
+    $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Release>>:-march=native>
+    $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Release>>:-ffast-math>
+    $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Debug>>:-g>
+    $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Debug>>:-Wall>
+  )
+  # Volta / Turing / Ampere (V100, RTX, A100, A40, 3090, A6000)
+  set(CMAKE_CUDA_ARCHITECTURES 70 75 80 86)
 endif()
 
-#-----------------------------------------------------------------------------
-SETIFEMPTY(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/lib)
-SETIFEMPTY(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/lib)
-SETIFEMPTY(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/bin)
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 5.0)
+  message(WARNING "GCC >= 5.0 is recommended for performance")
+endif()
 
-#-----------------------------------------------------------------------------
-SETIFEMPTY(CMAKE_INSTALL_LIBRARY_DESTINATION lib)
-SETIFEMPTY(CMAKE_INSTALL_ARCHIVE_DESTINATION lib)
-SETIFEMPTY(CMAKE_INSTALL_RUNTIME_DESTINATION bin)
-
-SETIFEMPTY(MINUS_INSTALL_RUNTIME_DIR bin)
-SETIFEMPTY(MINUS_INSTALL_LIBRARY_DIR lib)
-SETIFEMPTY(MINUS_INSTALL_ARCHIVE_DIR lib)
-SETIFEMPTY(PROJ_INSTALL_INCLUDE_DIR include/)
-
-# -- CMake support directory --
-set(PROJ_ROOT_SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR})
-set(PROJ_CMAKE_DIR ${CMAKE_CURRENT_LIST_DIR}/config/cmake/Modules)
-include(${PROJ_CMAKE_DIR}/StandardOptions.cmake)
-
-# -- Options to add extra compiler and linker flags --
-#
-# -- These options allow you to specify additional flags without --
-# -- affecting the default flags for a particular platform or build type --
-# -- This is especially useful for adding extra warning flags --
-set( MINUS_EXTRA_CMAKE_C_FLAGS             CACHE STRING "Extra flags appended to CMAKE_C_FLAGS" )
-set( MINUS_EXTRA_CMAKE_CXX_FLAGS           CACHE STRING "Extra flags appended to CMAKE_CXX_FLAGS" )
-set( MINUS_EXTRA_CMAKE_EXE_LINKER_FLAGS    CACHE STRING "Extra flags appended to CMAKE_EXE_LINKER_FLAGS" )
-set( MINUS_EXTRA_CMAKE_MODULE_LINKER_FLAGS CACHE STRING "Extra flags appended to CMAKE_MODULE_LINKER_FLAGS" )
-set( MINUS_EXTRA_CMAKE_SHARED_LINKER_FLAGS CACHE STRING "Extra flags appended to CMAKE_SHARED_LINKER_FLAGS" )
-set( CMAKE_C_FLAGS             "${CMAKE_C_FLAGS} ${MINUS_EXTRA_CMAKE_C_FLAGS}" )
-set( CMAKE_CXX_FLAGS           "${CMAKE_CXX_FLAGS} ${MINUS_EXTRA_CMAKE_CXX_FLAGS}" )
-set( CMAKE_EXE_LINKER_FLAGS    "${CMAKE_EXE_LINKER_FLAGS} ${MINUS_EXTRA_CMAKE_EXE_LINKER_FLAGS}" )
-set( CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} ${MINUS_EXTRA_CMAKE_MODULE_LINKER_FLAGS}" )
-set( CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${MINUS_EXTRA_CMAKE_SHARED_LINKER_FLAGS}" )
-
-# -- import openmp to the compiler --
+# -----------------------------------------------------------------------------
+# Third-party packages
+# -----------------------------------------------------------------------------
+find_package(CUDAToolkit REQUIRED)
 find_package(OpenMP REQUIRED)
-#find_package(OpenMP)
-#if (OPENMP_FOUND)
-#    set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
-#    set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
-#    set (CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${OpenMP_EXE_LINKER_FLAGS}")
-#endif()
+find_package(Threads REQUIRED)
 
-#-------------------------------------------------------------------
-#-- BUILD CONFIG OPTIONS AND WARNINGS --
-
-if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
-    # require at least gcc 4.8
-    if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS 5.0)
-      message(WARNING "***********************************")
-      message(WARNING "GCC must be at least 5.0 for speed!")
-      message(WARNING "***********************************")
-    endif()
-elseif (NOT "${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
-else()
-    message(WARNING "You are using an unsupported compiler! Compilation has only been tested with Clang and GCC.")
+# MAGMA 2.10.0 at MAGMA_ROOT is built against CUDA 12 (libcublas.so.12 / libcudart.so.12).
+# Configure with: module load cuda/12.9.0-cinr openblas/0.3.29-c43s
+if(CUDAToolkit_VERSION VERSION_LESS 12)
+  message(WARNING
+    "CUDA ${CUDAToolkit_VERSION} detected, but Magma at ${MAGMA_ROOT} "
+    "expects CUDA 12. Load cuda/12.9.0-cinr before configuring.")
 endif()
 
+list(APPEND CMAKE_PREFIX_PATH "${YAML_CPP_ROOT}")
+find_package(yaml-cpp REQUIRED CONFIG)
 
-# -- Avoid types of path names that could cause havoc with regular expressions --
-if( ${PROJECT_BINARY_DIR} MATCHES  \\+ )
-  message(SEND_ERROR "You cannot have a + in your binary path")
+if(OPENBLAS_ROOT)
+  list(APPEND CMAKE_PREFIX_PATH "${OPENBLAS_ROOT}")
+  set(_openblas_hints HINTS "${OPENBLAS_ROOT}" "${OPENBLAS_ROOT}/lib")
 endif()
-if( ${CMAKE_CURRENT_LIST_DIR} MATCHES  \\+ )
-  message(SEND_ERROR "You cannot have a + in your source path")
+find_library(OPENBLAS_LIBRARY
+  NAMES openblas
+  ${_openblas_hints}
+  REQUIRED
+)
+
+# -----------------------------------------------------------------------------
+# Imported MAGMA target
+# -----------------------------------------------------------------------------
+if(NOT EXISTS "${MAGMA_ROOT}/lib/libmagma.so")
+  message(FATAL_ERROR "libmagma.so not found under ${MAGMA_ROOT}/lib")
 endif()
-
-# include CMakeListsLocal.txt from source directory if it exists
-# also include it from the binary dir if different from source dir
-if( ${PROJECT_BINARY_DIR} MATCHES ${CMAKE_CURRENT_LIST_DIR} )
-  include( ${CMAKE_CURRENT_LIST_DIR}/CMakeListsLocal.txt OPTIONAL )
-else()
-  include( ${CMAKE_CURRENT_LIST_DIR}/CMakeListsLocal.txt OPTIONAL )
-  include( ${PROJECT_BINARY_DIR}/CMakeListsLocal.txt OPTIONAL )
-endif()
-
-set(PROJ_INCLUDE_DIR ${CMAKE_CURRENT_LIST_DIR})    #Source includes
-set(PROJ_BINARY_INCLUDE_DIR ${PROJECT_BINARY_DIR}) #Generated includes
-set(PROJ_INCLUDE_DIRS ${PROJ_BINARY_INCLUDE_DIR} ${PROJ_INCLUDE_DIR})
-set(PROJ_INSTALL_INCLUDE_DIR ${CMAKE_INSTALL_PREFIX}/include/)
-
-# -- include necessary libraries in the commands / executables file --
-include_directories(${PROJ_INCLUDE_DIRS})
-
-if(DEFINED ICL_BUILD)
-  include_directories( ${MAGMADIR}/include )
-  include_directories( ${MAGMADIR}/testing )
-  include_directories( ${MAGMADIR}/control )
-  include_directories( ${MAGMADIR}/magmablas )
-  include_directories( ${YAMLCPP_DIR}/include )
-  link_directories(${MAGMADIR}/lib)
-  link_directories(${OPENBLASDIR})
-  link_directories(${YAMLCPP_DIR}/build)
-
-else()
-  include_directories( "/users/cchien3/data/cchien3/magma-2.5.4/include" )
-  include_directories( "/users/cchien3/data/cchien3/magma-2.5.4/control" )
-  include_directories( "/users/cchien3/data/cchien3/magma-2.5.4/magmablas" )
-  include_directories( "/gpfs/data/bkimia/cchien3/yaml-cpp/bin/include" )
-  link_directories(/gpfs/data/bkimia/cchien3/yaml-cpp/bin/lib64)
+if(NOT EXISTS "${MAGMA_ROOT}/include/magma_v2.h")
+  message(FATAL_ERROR "magma_v2.h not found under ${MAGMA_ROOT}/include")
 endif()
 
-if(DEFINED ICL_BUILD)
-    link_directories("/apps/spacks/2023-11-15/opt/spack/linux-rocky9-x86_64/gcc-11.3.1/gcc-7.5.0-aembyabek5wcmaengfp7yn6c22xe6bq7/lib64/")
-endif()
+add_library(MAGMA::magma SHARED IMPORTED GLOBAL)
+set_target_properties(MAGMA::magma PROPERTIES
+  IMPORTED_LOCATION "${MAGMA_ROOT}/lib/libmagma.so"
+  INTERFACE_INCLUDE_DIRECTORIES
+    "${MAGMA_ROOT}/include;${MAGMA_SOURCE_ROOT}/control;${MAGMA_SOURCE_ROOT}/magmablas;${MAGMA_SOURCE_ROOT}/testing"
+)
+list(APPEND CMAKE_BUILD_RPATH "${MAGMA_ROOT}/lib")
 
-# adds a test for Endianness and a global variable that should be useful for file format programming -MM
-include(TestBigEndian)
-TEST_BIG_ENDIAN(MY_BIG_ENDIAN)
+add_library(OpenBLAS::OpenBLAS UNKNOWN IMPORTED GLOBAL)
+set_target_properties(OpenBLAS::OpenBLAS PROPERTIES
+  IMPORTED_LOCATION "${OPENBLAS_LIBRARY}"
+)
 
-# main lib
-add_subdirectory( magmaHC )
-# commands / executables
+message(STATUS "MAGMA_ROOT        = ${MAGMA_ROOT}")
+message(STATUS "MAGMA_SOURCE_ROOT = ${MAGMA_SOURCE_ROOT}")
+message(STATUS "YAML_CPP_ROOT     = ${YAML_CPP_ROOT}")
+message(STATUS "OPENBLAS_LIBRARY  = ${OPENBLAS_LIBRARY}")
+message(STATUS "CUDAToolkit       = ${CUDAToolkit_VERSION}")
+
+# -----------------------------------------------------------------------------
+# Project targets
+# -----------------------------------------------------------------------------
+add_subdirectory(magmaHC)
 add_subdirectory(cmd)

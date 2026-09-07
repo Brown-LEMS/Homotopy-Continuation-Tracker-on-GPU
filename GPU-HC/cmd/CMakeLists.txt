@@ -1,12 +1,15 @@
-#>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-#> main lib
-find_package(Threads REQUIRED)
-link_libraries(magmaHC)
+# -----------------------------------------------------------------------------
+# magmaHC-main executable
+# -----------------------------------------------------------------------------
 
-add_executable(magmaHC-main magmaHC-main.cpp )
+add_executable(magmaHC-main magmaHC-main.cpp)
 
-set_property(TARGET magmaHC-main
-             PROPERTY CUDA_SEPARABLE_COMPILATION ON)
+target_link_libraries(magmaHC-main
+  PRIVATE
+    magmaHC
+    Threads::Threads
+)
 
-target_link_libraries(magmaHC-main Threads::Threads)
-
+set_target_properties(magmaHC-main PROPERTIES
+  CUDA_SEPARABLE_COMPILATION ON
+)
