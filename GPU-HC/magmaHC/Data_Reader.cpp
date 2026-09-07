@@ -41,6 +41,7 @@
 #include "./PHC_Coeffs/p2c-rel_pos_quiver.h"
 #include "./PHC_Coeffs/p2c-P3P.h"
 #include "./PHC_Coeffs/p2c-P3P_10x10.h"
+#include "./PHC_Coeffs/p2c-generalized_2views_6pts_plucker.h"
 
 Data_Reader::Data_Reader(std::string Problem_Filename, std::string RANSAC_Data_File_Path, const int Num_Of_Tracks, const int Num_Of_Vars, const int Num_Of_Params) \
     : num_of_tracks(Num_Of_Tracks), num_of_variables(Num_Of_Vars), num_of_params(Num_Of_Params), RANSAC_Data_Path_(RANSAC_Data_File_Path) {
@@ -81,6 +82,7 @@ bool Data_Reader::Construct_Coeffs_From_Params( std::string HC_Problem, \
     else if (HC_Problem == "rel_pos_quiver")                    magmaHCWrapper::p2c_rel_pos_quiver(h_Target_Params, h_Start_Params, h_dHdx_PHC_Coeffs, h_dHdt_PHC_Coeffs);
     else if (HC_Problem == "P3P")                               magmaHCWrapper::p2c_P3P(h_Target_Params, h_Start_Params, h_dHdx_PHC_Coeffs, h_dHdt_PHC_Coeffs);
     else if (HC_Problem == "P3P_10x10")                         magmaHCWrapper::p2c_P3P_10x10(h_Target_Params, h_Start_Params, h_dHdx_PHC_Coeffs, h_dHdt_PHC_Coeffs);
+    else if (HC_Problem == "generalized_2views_6pts_plucker")   magmaHCWrapper::p2c_generalized_2views_6pts_plucker(h_Target_Params, h_Start_Params, h_dHdx_PHC_Coeffs, h_dHdt_PHC_Coeffs);
     else {
         LOG_ERROR("Invalid HC problem name or P2C function is not included in the Construct_Coeffs_From_Params.");
         return false;
